@@ -1,0 +1,69 @@
+# Ajan künyesi — Ajan Kontrol Paneli (dashboard) bu dosyayı okur.
+# Rol + misyon adımları: keşif → kazı → doğrulama → teslim
+# Canlı durum (sayfa/s, hata, note) scrape_run'dan gelir; bu YAML künyedir.
+
+michelin_de:
+  rol: toplayici
+  marka: Michelin
+  base_url: https://www.michelin.de
+  komut: uv run python -m adapters.michelin_de.agent
+  scout: scouts/michelin_de.md
+  misyon:
+    - id: kesif
+      ad: Sitemap keşfi
+      ipucu: model sayfa URL listesi
+    - id: kazi
+      ad: Sayfaları indir + parse + DB
+      ipucu: astro-island props / SKU kayıtları
+    - id: dogrulama
+      ad: validate.py kontrolü
+      ipucu: kural ihlali ve EAN kapsamı
+    - id: teslim
+      ad: Ham veri raw/ + kayıtlar DB'de
+      ipucu: EAN birincil eşleştirme anahtarı
+  son_mesaj: "model sayfaları ayrıştırılıyor..."
+
+continental_de:
+  rol: toplayici
+  marka: Continental
+  base_url: https://www.continental-reifen.de
+  komut: uv run python -m adapters.continental_de.agent
+  scout: scouts/continental_de.md
+  misyon:
+    - id: kesif
+      ad: productsearch API keşfi
+      ipucu: tek çağrı v1/continental/de/de/plt/sbs
+    - id: kazi
+      ad: API yanıtı parse + DB
+      ipucu: artNo/CAI, EPREL, EU etiketi
+    - id: dogrulama
+      ad: validate.py kontrolü
+      ipucu: endeks/format kuralları
+    - id: teslim
+      ad: Ham JSON raw/ + kayıtlar DB'de
+      ipucu: EAN + label_url
+  son_mesaj: "productsearch yanıtı bekleniyor..."
+
+pirelli_de:
+  rol: toplayici
+  marka: Pirelli
+  base_url: https://www.pirelli.com
+  komut: uv run python -m adapters.pirelli_de.agent
+  scout: scouts/pirelli_de.md
+  misyon:
+    - id: kesif
+      ad: Sitemap keşfi
+      ipucu: pkw sitemap → SKU URL'leri
+    - id: kazi
+      ad: SKU sayfalarını indir
+      ipucu: ~6544 PKW URL'si, nazik tarama
+    - id: parse
+      ad: Parse + DB yazımı
+      ipucu: ean_code/lika JSON
+    - id: dogrulama
+      ad: validate.py kontrolü
+      ipucu: kural ihlali
+    - id: teslim
+      ad: Ham HTML raw/ + kayıtlar DB'de
+      ipucu: EAN + EU etiketi
+  son_mesaj: "SKU sayfaları taranıyor..."

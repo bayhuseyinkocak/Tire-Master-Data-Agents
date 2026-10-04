@@ -10,7 +10,7 @@ from pathlib import Path
 
 import httpx
 
-from adapters.base import BaseAgent
+from adapters.base import BaseAgent, ensure_progress_columns
 from adapters.michelin_de.parse import parse
 
 SITEMAP = "https://www.michelin.de/sitemap.xml"
@@ -46,6 +46,7 @@ class MichelinDeAgent(BaseAgent):
         addcol("size_variant", "start_date", "TEXT")
         addcol("size_variant", "end_date", "TEXT")
         addcol("eu_label", "m_s", "BOOLEAN")
+        ensure_progress_columns(cur.connection)
         cur.execute("""CREATE TABLE IF NOT EXISTS variant_attributes (
             id INTEGER PRIMARY KEY,
             size_variant_id INTEGER NOT NULL UNIQUE REFERENCES size_variant(id),
@@ -76,13 +77,20 @@ class MichelinDeAgent(BaseAgent):
             "SELECT id FROM source WHERE base_url=?", (self.base_url,)).fetchone()[0]
         cur.execute("INSERT INTO scrape_run (source_id) VALUES (?)", (source_id,))
         run_id = cur.lastrowid
+        self._run_id = run_id
+        ensure_progress_columns(conn)
+        conn.commit()
 
+        self.report_progress(0, 0, "sitemap keşfi...")
         urls = self.discover_urls()
         if limit:
             urls = urls[:limit]
-        print(f"{len(urls)} model sayfası bulundu")
+        total = len(urls)
+        self.report_progress(0, total, f"{total} model sayfası keşfedildi")
+        print(f"{total} model sayfası bulundu")
 
-        for url in urls:
+        for i, url in enumerate(urls, 1):
+            self.report_progress(i - 1, total, f"{i}/{total} — {url.rstrip('/').rsplit('/', 1)[-1]}")
             try:
                 html_text = self.fetch(url)
             except httpx.HTTPStatusError as e:
@@ -91,10 +99,12 @@ class MichelinDeAgent(BaseAgent):
                 else:
                     print(f"HATA {url}: {e}")
                     self.stats["errors"] += 1
+                self.report_progress(i, total, f"404: {url.rstrip('/').rsplit('/', 1)[-1]}")
                 continue
             except Exception as e:  # noqa: BLE001
                 print(f"HATA {url}: {e}")
                 self.stats["errors"] += 1
+                self.report_progress(i, total, f"hata: {url.rstrip('/').rsplit('/', 1)[-1]}")
                 continue
             self.save_raw(url, html_text)
             self.stats["pages"] += 1
@@ -102,6 +112,7 @@ class MichelinDeAgent(BaseAgent):
                 records = [r for r in self.parse(html_text, url) if r.model and r.width]
                 if not records:
                     self.stats["skipped_empty"] += 1
+                    self.report_progress(i, total, f"{i}/{total} boş sayfa atlandı")
                     continue
 
                 # --- kayıt yazımı ---
@@ -196,6 +207,11 @@ class MichelinDeAgent(BaseAgent):
                          None if r.regrooving is None else json.dumps(r.regrooving)),
                     )
                     self.stats["records"] += 1
+
+                self.report_progress(
+                    i, total,
+                    f"{i}/{total} — {r0.model}: {len(records)} varyant",
+                )
 
                 # --- görseller: brand/model/source klasörüne + source_image ---
                 ean_to_sv = {

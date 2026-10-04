@@ -1,0 +1,20 @@
+<kaynak>:
+  rol: toplayici          # toplayici | kesifci | dogrulayici
+  marka: <Marka>
+  base_url: https://...
+  komut: uv run python -m adapters.<kaynak>.agent
+  scout: scouts/<kaynak>.md
+  misyon:
+    - id: kesif
+      ad: Keşif
+      ipucu: sitemap / API / liste
+    - id: kazi
+      ad: İndir + parse + DB
+      ipucu: sayfa sayısı, veri tipi
+    - id: dogrulama
+      ad: validate.py kontrolü
+      ipucu: kural ihlali
+    - id: teslim
+      ad: Ham veri raw/ + kayıtlar DB'de
+      ipucu: EAN birincil anahtar
+  son_mesaj: "ajan boşta"

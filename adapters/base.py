@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import abc
 import json
+import os
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,24 @@ import httpx
 
 RATE_LIMIT_SECONDS = 1.0
 USER_AGENT = "TiresMasterData-Scout/0.1 (+contact: local research project)"
+
+# scrape_run'da canlı panel için ilerleme alanları (ALTER ile eklenebilir)
+PROGRESS_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("pages_done", "INTEGER"),
+    ("pages_total", "INTEGER"),
+    ("note", "TEXT"),
+    ("pid", "INTEGER"),
+)
+
+
+def ensure_progress_columns(conn: sqlite3.Connection) -> None:
+    """scrape_run'a ilerleme kolonlarını yoksa ekler (eski DB uyumu)."""
+    cur = conn.cursor()
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(scrape_run)")]
+    for col, typedef in PROGRESS_COLUMNS:
+        if col not in cols:
+            cur.execute(f"ALTER TABLE scrape_run ADD COLUMN {col} {typedef}")
+    conn.commit()
 
 
 @dataclass
@@ -91,6 +110,7 @@ class BaseAgent(abc.ABC):
             headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=30
         )
         self._last_request = 0.0
+        self._run_id: int | None = None
         self.stats = {"pages": 0, "records": 0, "errors": 0,
                       "skipped_404": 0, "skipped_empty": 0}
 
@@ -140,21 +160,76 @@ class BaseAgent(abc.ABC):
 
     def run(self) -> None:
         run_id = self._start_run()
+        self._run_id = run_id
         try:
-            for url in self.discover_urls():
+            urls = self.discover_urls()
+            total = len(urls)
+            self.report_progress(0, total, f"{total} URL keşfedildi")
+            for i, url in enumerate(urls, 1):
                 try:
                     html = self.fetch(url)
                     self.save_raw(url, html)
                     records = self.parse(html, url)
                     self._persist(records)
                     self.stats["records"] += len(records)
+                    self.report_progress(
+                        i, total, f"{i}/{total} — {url.rstrip('/').rsplit('/', 1)[-1]}"
+                    )
                 except Exception:  # noqa: BLE001 - koşu durmamalı
                     self.stats["errors"] += 1
+                    self.report_progress(i, total, f"hata: {url}")
         finally:
             self._finish_run(run_id)
 
+    def report_progress(
+        self,
+        pages_done: int,
+        pages_total: int,
+        note: str | None = None,
+        run_id: int | None = None,
+    ) -> None:
+        """Canlı ilerleme: aktif scrape_run satırını günceller (panel izlesin diye).
+
+        Çoklu süreçte database is locked'ı önlemek için timeout + WAL kullanılır.
+        İlerleme yazımı başarısız olursa koşu durmaz.
+        """
+        rid = run_id if run_id is not None else self._active_run_id()
+        if rid is None:
+            return
+        try:
+            with sqlite3.connect(self.db_path, timeout=30) as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                ensure_progress_columns(db)
+                db.execute(
+                    """UPDATE scrape_run
+                       SET pages_done=?, pages_total=?, note=?, pid=?
+                       WHERE id=?""",
+                    (pages_done, pages_total, note, os.getpid(), rid),
+                )
+                db.commit()
+        except sqlite3.Error:
+            pass
+
+    def _active_run_id(self) -> int | None:
+        if self._run_id is not None:
+            return self._run_id
+        try:
+            with sqlite3.connect(self.db_path, timeout=30) as db:
+                row = db.execute(
+                    """SELECT r.id FROM scrape_run r
+                       JOIN source s ON s.id = r.source_id
+                       WHERE s.name = ? AND r.finished_at IS NULL
+                       ORDER BY r.id DESC LIMIT 1""",
+                    (self.source_name,),
+                ).fetchone()
+                return row[0] if row else None
+        except sqlite3.Error:
+            return None
+
     def _start_run(self) -> int:
-        with sqlite3.connect(self.db_path) as db:
+        with sqlite3.connect(self.db_path, timeout=30) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            ensure_progress_columns(db)
             db.execute(
                 "INSERT INTO scrape_run (source_id, status) "
                 "VALUES ((SELECT id FROM source WHERE name = ?), 'running')",
@@ -163,7 +238,9 @@ class BaseAgent(abc.ABC):
             return db.execute("SELECT last_insert_rowid()").fetchone()[0]
 
     def _finish_run(self, run_id: int) -> None:
-        with sqlite3.connect(self.db_path) as db:
+        with sqlite3.connect(self.db_path, timeout=30) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            ensure_progress_columns(db)
             db.execute(
                 "UPDATE scrape_run SET finished_at = CURRENT_TIMESTAMP, "
                 "records_in = ?, errors = ?, status = ? WHERE id = ?",

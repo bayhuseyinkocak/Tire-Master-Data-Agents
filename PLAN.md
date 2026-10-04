@@ -34,7 +34,8 @@ dashboard/           ← Streamlit panel: ajan koşuları, kapsama, veri analizi
 ## Ajan Mimarisi
 Her kaynak site kendi yapısına sahip olduğu için **site başına ajan** prensibi:
 - Her ajan `adapters/base.py` protokolünü uygular (fetch → raw kaydet → parse → DB), siteye özgü kısım `agent.py` + `parse.py` içindedir.
-- Ortak altyapı (nazik tarama ≤1 istek/sn, raw saklama, scrape_run loglama, hata toplama) base'den gelir.
+- Ortak altyapı (nazik tarama ≤1 istek/sn, raw saklama, scrape_run loglama, hata toplama, `report_progress`) base'den gelir.
+- **Yeni ajan ritüeli:** `.mimocode/skills/tires-agent-ops/` skill'i (scouts → adapters → `agents_registry.yaml` → limit testi → `validate --json` → panel kartı).
 
 ## Dashboard (Streamlit)
 - `uv run streamlit run dashboard/app.py`

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from adapters.base import BaseAgent
+from adapters.base import BaseAgent, ensure_progress_columns
 from adapters.pirelli_de.parse_pirelli import parse
 
 SITEMAP_INDEX = "https://www.pirelli.com/tyres/de-de/sitemap_index_tyres_de-de.xml"
@@ -43,6 +43,7 @@ class PirelliDeAgent(BaseAgent):
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
 
         addcol("eu_label", "m_s", "BOOLEAN")
+        ensure_progress_columns(cur.connection)
         cur.execute("""CREATE TABLE IF NOT EXISTS variant_attributes (
             id INTEGER PRIMARY KEY,
             size_variant_id INTEGER NOT NULL UNIQUE REFERENCES size_variant(id),
@@ -73,13 +74,21 @@ class PirelliDeAgent(BaseAgent):
             "SELECT id FROM source WHERE base_url=?", (self.base_url,)).fetchone()[0]
         cur.execute("INSERT INTO scrape_run (source_id) VALUES (?)", (source_id,))
         run_id = cur.lastrowid
+        self._run_id = run_id
+        ensure_progress_columns(conn)
+        conn.commit()
 
+        self.report_progress(0, 0, "sitemap keşfi...")
         urls = self.discover_urls()
         print(f"{len(urls)} SKU URL'si bulundu")
         if limit:
             urls = urls[:limit]
+        total = len(urls)
+        self.report_progress(0, total, f"{total} SKU URL'si keşfedildi")
 
-        for url in urls:
+        for i, url in enumerate(urls, 1):
+            slug = url.rstrip("/").rsplit("/", 1)[-1]
+            self.report_progress(i - 1, total, f"{i}/{total} — {slug}")
             try:
                 html = self.fetch(url)
             except httpx.HTTPStatusError as e:
@@ -88,10 +97,12 @@ class PirelliDeAgent(BaseAgent):
                 else:
                     print(f"HATA {url}: {e}")
                     self.stats["errors"] += 1
+                self.report_progress(i, total, f"404: {slug}")
                 continue
             except Exception as e:  # noqa: BLE001
                 print(f"HATA {url}: {e}")
                 self.stats["errors"] += 1
+                self.report_progress(i, total, f"hata: {slug}")
                 continue
             self.save_raw(url, html)
             self.stats["pages"] += 1
@@ -99,6 +110,7 @@ class PirelliDeAgent(BaseAgent):
             records = [r for r in self.parse(html, url) if r.ean]
             if not records:
                 self.stats["skipped_empty"] += 1
+                self.report_progress(i, total, f"{i}/{total} boş sayfa: {slug}")
                 continue
 
             for r in records:
@@ -151,6 +163,10 @@ class PirelliDeAgent(BaseAgent):
                     (sv_id, None),
                 )
                 self.stats["records"] += 1
+
+            self.report_progress(
+                i, total, f"{i}/{total} — {slug}: {len(records)} varyant"
+            )
 
         cur.execute(
             "UPDATE scrape_run SET finished_at=?, records_in=?, errors=?, status=? WHERE id=?",

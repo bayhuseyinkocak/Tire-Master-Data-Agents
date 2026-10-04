@@ -6,4 +6,9 @@ dependencies = [
     "httpx>=0.28.1",
     "pandas>=3.0.6",
     "streamlit>=1.64.0",
+    "pyyaml>=6.0",
+    "bloub-python",
 ]
+
+[tool.uv.sources]
+bloub-python = { git = "https://github.com/bayhuseyinkocak/bloub-for-python.git" }

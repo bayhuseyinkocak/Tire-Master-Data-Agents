@@ -1,0 +1,156 @@
+# .graphifyignore — Graphify corpus filter
+# Syntax: gitignore ile aynı (.gitignore ile merge edilir; .graphifyignore son söz)
+# Amaç: yalnızca mimari/kod/doküman → graph; ham veri, DB, sanal ortam gürültü olmasın.
+
+# ─────────────────────────────────────────────
+# Ham scrape verisi (1.2GB+) — asla grafiğe girmez
+# ─────────────────────────────────────────────
+raw/
+raw/**
+!raw/.gitkeep
+
+# ─────────────────────────────────────────────
+# Veritabanı / binary artefact
+# ─────────────────────────────────────────────
+tires.db
+tires.db-journal
+tires.db-wal
+tires.db-shm
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.duckdb
+*.parquet
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.gz
+*.bz2
+*.xz
+*.rar
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.ico
+*.svg
+*.woff
+*.woff2
+*.ttf
+*.otf
+*.eot
+*.mp3
+*.mp4
+*.wav
+*.mov
+
+# ─────────────────────────────────────────────
+# Sanal ortam / bağımlılık ağaçları
+# ─────────────────────────────────────────────
+.venv/
+venv/
+env/
+node_modules/
+.mimocode/node_modules/
+.mimocode/package-lock.json
+.mimocode/package.json
+site-packages/
+.tox/
+.nox/
+
+# ─────────────────────────────────────────────
+# Derleme / cache / araç çıktıları
+# ─────────────────────────────────────────────
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+*.log
+.streamlit/
+
+# ─────────────────────────────────────────────
+# Lock / kilitleme / kil dosyaları (grafik için gürültü)
+# ─────────────────────────────────────────────
+uv.lock
+poetry.lock
+Pipfile.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+*.lock
+
+# ─────────────────────────────────────────────
+# Sistem / editor / gizli anahtarlar
+# ─────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+.idea/
+.vscode/
+*.swp
+*~
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+secrets.toml
+.streamlit/secrets.toml
+
+# ─────────────────────────────────────────────
+# Git internals (olur da scan root'a girerse)
+# ─────────────────────────────────────────────
+.git/
+.hg/
+.svn/
+
+# ─────────────────────────────────────────────
+# Graphify kendi çalışma alanı
+# (dışarıda tutulur; paylaşılan ürün graph.json + GRAPH_REPORT.md + wiki/)
+# ─────────────────────────────────────────────
+graphify-out/
+graphify-out/**
+# İstisna: paylaşılan okunabilir ürünler istenirse elle eklenebilir
+# !graphify-out/graph.json
+# !graphify-out/GRAPH_REPORT.md
+# !graphify-out/wiki/
+
+# ─────────────────────────────────────────────
+# Skill asset iskeletleri / locale JSON — mimari için düşük değer
+# (kod olarak tutulur; opsiyonel: açmak istersen yorum satırını kaldır)
+# ─────────────────────────────────────────────
+.mimocode/skills/tires-agent-ops/locales/
+.mimocode/skills/**/assets/agent-skeleton.py
+
+# Notlar:
+# 1) .gitignore ile merge: .gitignore zaten raw/, tires.db, .venv, graphify-out dışlar.
+# 2) Bu dosya ek katman: binary + lock + locale + skeleton gürültüsünü de ele.
+# 3) Kod + markdown + yaml + sql kalsın — mimari hikâye bunlarda.
+# 4) Yeni klasör (örn. scrapers/, etl/) eklersen buraya ekleme gerekmez;
+#    python/md/yaml/sql otomatik kalır. Binary/data klasörü açarsan ekle.

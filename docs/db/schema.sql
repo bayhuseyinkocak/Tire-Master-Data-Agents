@@ -125,5 +125,11 @@ CREATE TABLE IF NOT EXISTS scrape_run (
     finished_at TIMESTAMP,
     records_in  INTEGER,
     errors      INTEGER,
-    status      TEXT                             -- ok / partial / failed
+    status      TEXT,                            -- ok / partial / failed / running
+    -- Canlı panel / Ajan Kontrol Paneli alanları (Faz 1)
+    pages_done  INTEGER,                         -- işlenmiş sayfa/istek
+    pages_total INTEGER,                         -- keşfedilen toplam URL
+    note        TEXT,                            -- son log / konuşma balonu
+    pid         INTEGER                          -- çalışan süreç id
 );
+CREATE INDEX IF NOT EXISTS idx_scrape_run_source ON scrape_run (source_id, id);

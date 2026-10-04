@@ -7,7 +7,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from adapters.base import BaseAgent
+from adapters.base import BaseAgent, ensure_progress_columns
 from adapters.continental_de.parse_api import parse
 
 API_URL = "https://api.productsearch.continental-tires.com/v1/continental/de/de/plt/sbs?articles=true"
@@ -56,6 +56,7 @@ class ContinentalDeAgent(BaseAgent):
             addcol("size_variant", col, typ)
         addcol("variant_attributes", "is_ev_compatible", "BOOLEAN")
         addcol("eu_label", "m_s", "BOOLEAN")
+        ensure_progress_columns(cur.connection)
 
     def run(self, limit: int | None = None) -> None:
         conn = sqlite3.connect(self.db_path)
@@ -71,16 +72,23 @@ class ContinentalDeAgent(BaseAgent):
             "SELECT id FROM source WHERE base_url=?", (self.base_url,)).fetchone()[0]
         cur.execute("INSERT INTO scrape_run (source_id) VALUES (?)", (source_id,))
         run_id = cur.lastrowid
+        self._run_id = run_id
+        ensure_progress_columns(conn)
+        conn.commit()
 
+        self.report_progress(0, 0, "productsearch API çağrısı bekleniyor...")
         for url in self.discover_urls():
             payload = self.fetch(url)
             self.save_raw(url, payload)
             self.stats["pages"] += 1
+            self.report_progress(1, 1, "API yanıtı alındı, parse başlıyor")
             records = self.parse(payload, url)
             if limit:
                 records = records[:limit]
+            total = len(records)
+            self.report_progress(0, total, f"{total} kayıt parse edildi, DB yazılıyor")
 
-            for r in records:
+            for r_i, r in enumerate(records, 1):
                 cur.execute("INSERT OR IGNORE INTO brand (name, site_url) VALUES (?, ?)",
                             (r.brand, self.base_url))
                 brand_id = cur.execute("SELECT id FROM brand WHERE name=?",
@@ -182,7 +190,14 @@ class ContinentalDeAgent(BaseAgent):
                      None, json.dumps(r.extra, ensure_ascii=False)),
                 )
                 self.stats["records"] += 1
+                if total and (r_i % 50 == 0 or r_i == total):
+                    self.report_progress(
+                        r_i, total,
+                        f"{r_i}/{total} — {r.model}: {r.width}/{r.aspect_ratio}R{r.rim_diameter}",
+                    )
 
+        self.report_progress(total if records else 1, total or 1,
+                             "Continental kaydı tamamlandı")
         cur.execute(
             "UPDATE scrape_run SET finished_at=?, records_in=?, errors=?, status=? WHERE id=?",
             (datetime.now().isoformat(), self.stats["records"], self.stats["errors"],
