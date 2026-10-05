@@ -23,6 +23,9 @@ from typing import Any
 import yaml
 from websockets.asyncio.server import ServerConnection, serve
 
+from agent_runtime import AgentRuntime, bus_event, now_ms
+from llm import LlmConfig
+
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "tires.db"
 REGISTRY_PATH = ROOT / "agents_registry.yaml"
@@ -103,7 +106,11 @@ class Bridge:
     def __init__(self) -> None:
         self.clients: set[ServerConnection] = set()
         self.registry = load_registry()
-        # (run_id, note, pages_done, finished) fingerprint
+        self.runtime = AgentRuntime(
+            DB_PATH,
+            self.registry,
+            central_llm=LlmConfig.from_dict(self.registry.get("_llm") or {}),
+        )
         self._seen: dict[str, tuple[Any, ...]] = {}
         self._announced: set[str] = set()
 
@@ -164,42 +171,9 @@ class Bridge:
             return
         if not isinstance(data, dict) or data.get("type") != "user.message":
             return
-        mentions = data.get("mentions") or []
+        mentions = list(data.get("mentions") or [])
         text = str(data.get("text") or "")
-        # panel süreç başlatmaz — durum/özet döner
-        await self.broadcast(self.reply_status(mentions, text))
-
-    def reply_status(self, mentions: list[str], text: str) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        ids = [m for m in mentions if m in self.agent_ids()]
-        if not ids:
-            ids = self.agent_ids()[:1]
-        lead, helpers = ids[0], ids[1:]
-        events.append(bus_event("agent.called", lead=lead, helpers=helpers))
-        try:
-            conn = connect_db()
-            runs = latest_runs(conn)
-        except sqlite3.Error:
-            runs = {}
-        finally:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001
-                pass
-        id_to_source = {v: k for k, v in SOURCE_TO_ID.items()}
-        for agent_id in ids:
-            source = id_to_source.get(agent_id, "")
-            run = runs.get(source)
-            events.append(
-                bus_event("agent.thinking", agentId=agent_id, state=THINK.get(agent_id, "thinking"))
-            )
-            reply = status_line(agent_id, run)
-            if text:
-                reply = f"{reply} («{text[:40]}»)"
-            events.append(bus_event("agent.say", agentId=agent_id, text=reply))
-            events.append(bus_event("agent.thinking", agentId=agent_id, state="idle"))
-            events.append(bus_event("agent.done", agentId=agent_id))
-        return events
+        await self.broadcast(self.runtime.dispatch_user(text, mentions))
 
     def poll_events(self) -> list[dict[str, Any]]:
         """scrape_run değişimini BusEvent’e çevir."""

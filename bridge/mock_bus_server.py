@@ -48,6 +48,12 @@ def scenario_for(text: str, mentions: list[str]) -> list[dict[str, Any]]:
         events.append(ev("agent.done", agentId=target))
     else:
         events.append(ev("agent.say", agentId=lead, text=say))
+        child = f"{lead}.KESIF"
+        events.append(ev("agent.subspawn", parent=lead, child=child, step="Sitemap keşfi"))
+        events.append(ev("agent.say", agentId=child, text="mock: keşif satırı"))
+        events.append(
+            ev("agent.subdone", parent=lead, child=child, step="Sitemap keşfi", summary="ok")
+        )
 
     events.append(ev("agent.thinking", agentId=lead, state="idle"))
     events.append(ev("agent.done", agentId=lead))

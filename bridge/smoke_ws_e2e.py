@@ -71,6 +71,8 @@ async def main() -> int:
     for need in ("agent.called", "agent.say", "agent.done"):
         if need not in types:
             errors.append(f"eksik olay: {need}")
+    if "agent.subspawn" not in types:
+        errors.append("uyarı: subspawn yok (mock değilse / LLM yolunda normal olabilir)")
 
     hard = [e for e in errors if not e.startswith("uyarı")]
     print(f"URL {URL}")
