@@ -336,10 +336,19 @@ class AgentRuntime:
         return (
             f"{custom}\n"
             f"Kaynak: {p.source}. Misyon: {self.tools.mission_lines(p)}.\n"
-            f"Bugün şunları biliyorsun (araçlarla tazele):\n"
-            f"- scrape_status({p.source})\n"
-            f"- count_skus()\n"
-            "Yanıtın 1-3 cümle olsun. start_run başlatamazsın (K2)."
+            "Araç özetlerindeki sayı ve tarihleri aynen kullan; uydurma. "
+            "Bilmiyorsan 'kayıtta yok' de.\n"
+            "Yanıtın 1-3 cümle olsun. start_run başlatamazsın (K2); yazma aracı yok."
+        )
+
+    def _tool_context(self, p: AgentPersona) -> str:
+        """Her turda tüm araç özetleri — LLM ve fallback aynı veriyi görsün."""
+        return (
+            f"scrape_status({p.source}): {self.tools.scrape_status(p.source)}\n"
+            f"count_skus: {self.tools.count_skus()}\n"
+            f"count_skus({p.source}): {self.tools.count_skus(p.source)}\n"
+            f"data_quality: {self.tools.data_quality()}\n"
+            f"run_history({p.source}): {self.tools.run_history(p.source)}"
         )
 
     def _llm_for(self, p: AgentPersona) -> LlmConfig:
@@ -436,11 +445,11 @@ class AgentRuntime:
         if len(hist) > 12:
             del hist[:-12]
 
-        context = (
-            f"scrape_status: {self.tools.scrape_status(p.source)}\n"
-            f"count_skus: {self.tools.count_skus()}"
-        )
-        messages = [*hist[:-1], {"role": "user", "content": f"[araçlar]\n{context}\n[soru]\n{user_text}"}]
+        context = self._tool_context(p)
+        messages = [
+            *hist[:-1],
+            {"role": "user", "content": f"[araçlar]\n{context}\n[soru]\n{user_text}"},
+        ]
         text = chat_completion(self._llm_for(p), self.system_prompt(p), messages)
         if not text:
             text = self._fallback_say(p, user_text)
