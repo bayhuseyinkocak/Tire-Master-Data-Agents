@@ -1,6 +1,7 @@
 """LLM istemcisi — OpenAI-uyumlu /v1/chat/completions.
 
 Ajan bazlı override → merkezi → kural tabanlı fallback (anahtar yoksa).
+provider sadece şablon açar; baseUrl / model / apiKeyEnv her zaman override edilebilir.
 """
 
 from __future__ import annotations
@@ -12,6 +13,35 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+# provider preset → (baseUrl, apiKeyEnv, model). Boş alan = kullanıcı doldurur.
+PROVIDERS: dict[str, dict[str, str]] = {
+    "openai": {
+        "baseUrl": "https://api.openai.com/v1",
+        "apiKeyEnv": "OPENAI_API_KEY",
+        "model": "gpt-4o-mini",
+    },
+    "deepseek": {
+        "baseUrl": "https://api.deepseek.com/v1",
+        "apiKeyEnv": "DEEPSEEK_API_KEY",
+        "model": "deepseek-chat",
+    },
+    "mimo": {
+        "baseUrl": "",
+        "apiKeyEnv": "MIMO_API_KEY",
+        "model": "",
+    },
+    "openrouter": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "apiKeyEnv": "OPENROUTER_API_KEY",
+        "model": "",
+    },
+    "custom": {
+        "baseUrl": "https://api.openai.com/v1",
+        "apiKeyEnv": "OPENAI_API_KEY",
+        "model": "gpt-4o-mini",
+    },
+}
+
 
 @dataclass
 class LlmConfig:
@@ -20,18 +50,24 @@ class LlmConfig:
     api_key: str | None = None
     api_key_env: str = "OPENAI_API_KEY"
     timeout: float = 30.0
+    provider: str = "openai"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None, fallback: "LlmConfig | None" = None) -> "LlmConfig":
+        """provider şablon açar; baseUrl / model / apiKeyEnv her zaman override edilebilir."""
         base = fallback or cls()
         data = data or {}
-        api_key_env = str(data.get("apiKeyEnv") or base.api_key_env)
+        provider = str(data.get("provider") or "").strip().lower()
+        preset: dict[str, str] = PROVIDERS.get(provider, {}) if provider else {}
+
+        api_key_env = str(data.get("apiKeyEnv") or preset.get("apiKeyEnv") or base.api_key_env)
         api_key = os.environ.get(api_key_env) or base.api_key
         return cls(
-            base_url=str(data.get("baseUrl") or base.base_url),
-            model=str(data.get("model") or base.model),
+            base_url=str(data.get("baseUrl") or preset.get("baseUrl") or base.base_url),
+            model=str(data.get("model") or preset.get("model") or base.model),
             api_key=api_key,
             api_key_env=api_key_env,
+            provider=provider or base.provider,
         )
 
 
