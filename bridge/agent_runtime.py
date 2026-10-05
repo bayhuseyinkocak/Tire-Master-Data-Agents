@@ -8,11 +8,18 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
 from llm import LlmConfig, chat_completion
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 SOURCE_TO_ID = {
     "michelin_de": "MICHELIN",
@@ -45,6 +52,31 @@ def bus_event(type_: str, **payload: Any) -> dict[str, Any]:
     return {"type": type_, "ts": now_ms(), **payload}
 
 
+def _parse_ts(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    s = str(value).strip().replace("T", " ")
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(s[:26] if "." in s else s[:19], fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _fmt_ts(value: Any) -> str:
+    dt = _parse_ts(value)
+    if dt:
+        return dt.strftime("%Y-%m-%d %H:%M")
+    s = str(value or "").strip()
+    return s[:16] if s else "-"
+
+
 @dataclass
 class AgentPersona:
     id: str
@@ -58,18 +90,35 @@ class AgentPersona:
 
 
 class Tools:
-    """K1 araçları — salt okuma. start_run bilerek yok."""
+    """K1.5 araçları — salt okuma DB. start_run / yazma bilerek yok."""
 
     def __init__(self, db_path, registry: dict[str, Any]) -> None:
         self.db_path = db_path
         self.registry = registry
 
-    def scrape_status(self, source: str) -> str:
+    def _connect(self) -> sqlite3.Connection | None:
         try:
             conn = sqlite3.connect(self.db_path, timeout=30)
             conn.row_factory = sqlite3.Row
-        except sqlite3.Error as e:
-            return f"db hatası: {e}"
+            return conn
+        except sqlite3.Error:
+            return None
+
+    def _brand_name(self, source: str | None) -> str | None:
+        if not source:
+            return None
+        meta = self.registry.get(source) or {}
+        name = str(meta.get("marka") or "").strip()
+        if name:
+            return name
+        # michelin_de → Michelin
+        slug = source.split("_")[0]
+        return slug[:1].upper() + slug[1:] if slug else source
+
+    def scrape_status(self, source: str) -> str:
+        conn = self._connect()
+        if conn is None:
+            return "db hatası: bağlanılamadı."
         try:
             row = conn.execute(
                 """
@@ -80,26 +129,121 @@ class Tools:
                 """,
                 (source,),
             ).fetchone()
+        except sqlite3.OperationalError:
+            return "henüz scrape_run yok."
         except sqlite3.Error:
-            return "scrape_run okunamadı (şema henüz olmayabilir)."
+            return "scrape_run okunamadı."
         finally:
             conn.close()
         if not row:
             return "henüz scrape_run yok."
         d = dict(row)
-        done, total = d.get("pages_done") or 0, d.get("pages_total") or 0
+        records = d.get("records_in")
+        errors = d.get("errors")
+        status = d.get("status") or "-"
         if d.get("finished_at"):
-            return f"bitti · {d.get('records_in') or 0} kayıt · {d.get('errors') or 0} hata · status={d.get('status')}"
-        return f"çalışıyor · {done}/{total} · note={d.get('note') or '-'}"
+            return (
+                f"bitti · {records if records is not None else 0} kayıt · "
+                f"{errors if errors is not None else 0} hata · status={status} · "
+                f"{_fmt_ts(d.get('finished_at'))}"
+            )
+        done, total = d.get("pages_done") or 0, d.get("pages_total") or 0
+        progress = f"{done}/{total} sayfa" if total else (f"{done} sayfa" if done else "koşu açık")
+        return f"çalışıyor · {progress} · note={d.get('note') or '-'} · başladı {_fmt_ts(d.get('started_at'))}"
 
-    def count_skus(self) -> str:
+    def count_skus(self, source: str | None = None) -> str:
+        conn = self._connect()
+        if conn is None:
+            return "db hatası: bağlanılamadı."
         try:
-            conn = sqlite3.connect(self.db_path, timeout=30)
-            n = conn.execute("SELECT COUNT(*) FROM size_variant").fetchone()[0]
-            conn.close()
-            return f"size_variant: {n}"
+            total = conn.execute("SELECT COUNT(*) FROM size_variant").fetchone()[0]
+            rows = conn.execute(
+                """
+                SELECT b.name AS brand, COUNT(*) AS n
+                FROM size_variant v
+                JOIN tire_model m ON m.id = v.model_id
+                JOIN brand b ON b.id = m.brand_id
+                GROUP BY b.name
+                ORDER BY n DESC, b.name
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return "henüz SKU yok."
         except sqlite3.Error:
-            return "size_variant sayılamadı."
+            return "SKU sayılamadı."
+        finally:
+            conn.close()
+
+        by_brand = [(str(r["brand"]), int(r["n"])) for r in rows]
+        if source:
+            brand = self._brand_name(source)
+            n = next((c for b, c in by_brand if b.lower() == (brand or "").lower()), 0)
+            label = brand or source
+            return f"{label} {n} · toplam {total}"
+        if not by_brand:
+            return f"toplam {total} | (marka kırılımı yok)"
+        parts = " · ".join(f"{b} {c}" for b, c in by_brand)
+        return f"toplam {total} | {parts}"
+
+    def run_history(self, source: str, limit: int = 3) -> str:
+        conn = self._connect()
+        if conn is None:
+            return "db hatası: bağlanılamadı."
+        try:
+            rows = conn.execute(
+                """
+                SELECT r.started_at, r.finished_at, r.records_in, r.errors, r.status
+                FROM scrape_run r JOIN source s ON s.id = r.source_id
+                WHERE s.name = ?
+                ORDER BY r.id DESC LIMIT ?
+                """,
+                (source, max(1, int(limit))),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return "henüz koşu yok."
+        except sqlite3.Error:
+            return "koşu geçmişi okunamadı."
+        finally:
+            conn.close()
+        if not rows:
+            return "henüz koşu yok."
+        parts = []
+        for r in rows:
+            d = dict(r)
+            when = _fmt_ts(d.get("finished_at") or d.get("started_at"))
+            state = "bitti" if d.get("finished_at") else "açık"
+            records = d.get("records_in")
+            errors = d.get("errors")
+            status = d.get("status") or "-"
+            parts.append(
+                f"{when} {state} {records if records is not None else 0} kayıt "
+                f"{errors if errors is not None else 0} hata {status}"
+            )
+        return " | ".join(parts)
+
+    def data_quality(self) -> str:
+        try:
+            from normalize import validate
+        except ImportError:
+            return "validate modülü bulunamadı."
+        try:
+            summary = validate.collect(self.db_path)
+        except Exception:
+            return "kalite özeti okunamadı (şema henüz olmayabilir)."
+        missing = summary.get("missing") or {}
+        counts = summary.get("counts") or {}
+        if not counts.get("size_variant"):
+            return "henüz kayıt yok; kalite özeti için veri gerek."
+        issues = summary.get("total_issues") or 0
+        bad = [r for r in (summary.get("rules") or []) if not r.get("ok") and r.get("count")]
+        top = ", ".join(f"{r['label']}: {r['count']}" for r in bad[:3])
+        tail = f" ({top})" if top else ""
+        return (
+            f"eksik EAN {missing.get('ean') or 0} · "
+            f"eksik ebat {missing.get('size') or 0} · "
+            f"eksik etiket {missing.get('label') or 0} · "
+            f"kural ihlali {issues}{tail}"
+        )
 
     def mission_lines(self, persona: AgentPersona) -> str:
         parts = []
