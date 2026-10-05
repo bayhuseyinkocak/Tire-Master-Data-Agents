@@ -189,8 +189,8 @@ class Tools:
         status = d.get("status") or "-"
         if d.get("finished_at"):
             return (
-                f"bitti · {records if records is not None else 0} kayıt · "
-                f"{errors if errors is not None else 0} hata · status={status} · "
+                f"Toplam · {records if records is not None else 0} kayıt topladım · "
+                f"{errors if errors is not None else 0} hata var · status={status} · "
                 f"{_fmt_ts(d.get('finished_at'))}"
             )
         done, total = d.get("pages_done") or 0, d.get("pages_total") or 0
