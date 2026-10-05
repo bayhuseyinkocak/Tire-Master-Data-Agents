@@ -29,55 +29,81 @@ RULES = [
 ]
 
 
-def collect() -> dict:
-    """Panel için makine-okur kalite özeti."""
-    conn = sqlite3.connect(DB)
+def collect(db_path: str | Path | None = None) -> dict:
+    """Panel için makine-okur kalite özeti.
+
+    db_path verilmezse proje kökündeki tires.db kullanılır (eski çağrılar bozulmaz).
+    Şema/boş DB: alanlar 0 dolar, exception fırlatılmaz.
+    """
+    path = Path(db_path) if db_path is not None else DB
+    conn = sqlite3.connect(str(path))
     rules_out = []
     total_issues = 0
-    for label, where in RULES:
-        n = conn.execute(
-            f"""SELECT COUNT(*) FROM size_variant v
-                LEFT JOIN eu_label e ON e.size_variant_id = v.id WHERE {where}"""
-        ).fetchone()[0]
-        total_issues += n
-        rules_out.append({"label": label, "count": n, "ok": n == 0})
+    try:
+        for label, where in RULES:
+            try:
+                n = conn.execute(
+                    f"""SELECT COUNT(*) FROM size_variant v
+                        LEFT JOIN eu_label e ON e.size_variant_id = v.id WHERE {where}"""
+                ).fetchone()[0]
+            except sqlite3.Error:
+                n = 0
+            total_issues += n
+            rules_out.append({"label": label, "count": n, "ok": n == 0})
 
-    coverage = []
-    for row in conn.execute(
-        """SELECT b.name, COUNT(DISTINCT v.ean),
-                  SUM(CASE WHEN v.ean IS NULL THEN 1 ELSE 0 END)
-           FROM size_variant v
-           JOIN tire_model m ON m.id = v.model_id
-           JOIN brand b ON b.id = m.brand_id
-           GROUP BY b.name"""
-    ):
-        coverage.append({
-            "brand": row[0],
-            "ean_count": row[1],
-            "ean_missing": row[2],
-        })
+        coverage = []
+        try:
+            for row in conn.execute(
+                """SELECT b.name, COUNT(DISTINCT v.ean),
+                          SUM(CASE WHEN v.ean IS NULL THEN 1 ELSE 0 END)
+                   FROM size_variant v
+                   JOIN tire_model m ON m.id = v.model_id
+                   JOIN brand b ON b.id = m.brand_id
+                   GROUP BY b.name"""
+            ):
+                coverage.append({
+                    "brand": row[0],
+                    "ean_count": row[1],
+                    "ean_missing": row[2],
+                })
+        except sqlite3.Error:
+            pass
 
-    multi = []
-    rows = conn.execute(
-        """SELECT v.ean, GROUP_CONCAT(DISTINCT b.name) AS kaynaklar, COUNT(DISTINCT b.id) AS n
-           FROM size_variant v
-           JOIN tire_model m ON m.id = v.model_id
-           JOIN brand b ON b.id = m.brand_id
-           WHERE v.ean IS NOT NULL
-           GROUP BY v.ean HAVING n > 1 ORDER BY n DESC LIMIT 20"""
-    ).fetchall()
-    for ean, brands, n in rows:
-        multi.append({"ean": ean, "brands": brands, "sources": n})
+        multi = []
+        try:
+            rows = conn.execute(
+                """SELECT v.ean, GROUP_CONCAT(DISTINCT b.name) AS kaynaklar, COUNT(DISTINCT b.id) AS n
+                   FROM size_variant v
+                   JOIN tire_model m ON m.id = v.model_id
+                   JOIN brand b ON b.id = m.brand_id
+                   WHERE v.ean IS NOT NULL
+                   GROUP BY v.ean HAVING n > 1 ORDER BY n DESC LIMIT 20"""
+            ).fetchall()
+            for ean, brands, n in rows:
+                multi.append({"ean": ean, "brands": brands, "sources": n})
+        except sqlite3.Error:
+            pass
 
-    totals = conn.execute(
-        """SELECT
-             (SELECT COUNT(*) FROM size_variant),
-             (SELECT COUNT(*) FROM size_variant WHERE ean IS NOT NULL),
-             (SELECT COUNT(*) FROM brand),
-             (SELECT COUNT(*) FROM tire_model),
-             (SELECT COUNT(*) FROM eu_label)"""
-    ).fetchone()
-    conn.close()
+        try:
+            totals = conn.execute(
+                """SELECT
+                     (SELECT COUNT(*) FROM size_variant),
+                     (SELECT COUNT(*) FROM size_variant WHERE ean IS NOT NULL),
+                     (SELECT COUNT(*) FROM brand),
+                     (SELECT COUNT(*) FROM tire_model),
+                     (SELECT COUNT(*) FROM eu_label),
+                     (SELECT COUNT(*) FROM size_variant v
+                        LEFT JOIN eu_label e ON e.size_variant_id = v.id
+                       WHERE e.id IS NULL),
+                     (SELECT COUNT(*) FROM size_variant v
+                       WHERE v.width IS NULL OR v.aspect_ratio IS NULL OR v.rim_diameter IS NULL),
+                     (SELECT COUNT(*) FROM size_variant WHERE ean IS NULL)"""
+            ).fetchone()
+        except sqlite3.Error:
+            totals = (0, 0, 0, 0, 0, 0, 0, 0)
+    finally:
+        conn.close()
+
     return {
         "total_issues": total_issues,
         "rules": rules_out,
@@ -89,6 +115,11 @@ def collect() -> dict:
             "brand": totals[2],
             "tire_model": totals[3],
             "eu_label": totals[4],
+        },
+        "missing": {
+            "ean": totals[7],
+            "size": totals[6],
+            "label": totals[5],
         },
         "quality_score": None if totals[0] == 0 else round(
             1 - total_issues / max(totals[0], 1), 3

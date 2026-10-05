@@ -1,0 +1,23 @@
+name: graphify-wiki
+on:
+  push:
+    branches: [main]
+jobs:
+  wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install graphifyy
+      - run: graphify update .
+      - run: graphify export wiki
+      - run: |
+          git clone https://x-access-token:${{ secrets.WIKI_PUSH_TOKEN }}@github.com/bayhuseyinkocak/AI-Agent-Bloub-Panel.wiki.git wiki-repo
+          rsync -a --delete --exclude='.git' graphify-out/wiki/ wiki-repo/
+          cd wiki-repo
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "wiki: graphify sync"
+          git push

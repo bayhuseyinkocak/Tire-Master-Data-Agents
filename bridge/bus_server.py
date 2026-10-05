@@ -13,7 +13,9 @@ Panel süreç başlatmaz; user.message'a durum özetiyle cevap verir.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
+import os
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -29,8 +31,8 @@ from llm import LlmConfig
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "tires.db"
 REGISTRY_PATH = ROOT / "agents_registry.yaml"
-HOST = "127.0.0.1"
-PORT = 8787
+HOST = os.environ.get("BUS_HOST", "127.0.0.1")
+PORT = int(os.environ.get("BUS_PORT", "8787"))
 
 # registry/source adı → panel paketindeki agent id
 SOURCE_TO_ID = {
@@ -225,9 +227,21 @@ class Bridge:
 
 async def main() -> None:
     bridge = Bridge()
-    print(f"Agent Panel bridge → ws://{HOST}:{PORT}/bus  (db={DB_PATH})")
-    async with serve(bridge.handler, HOST, PORT):
-        await bridge.poll_loop()
+    url = f"ws://{HOST}:{PORT}/bus"
+    print(f"Agent Panel bridge → {url}  (db={DB_PATH})")
+    try:
+        async with serve(bridge.handler, HOST, PORT):
+            await bridge.poll_loop()
+    except OSError as e:
+        if e.errno in (errno.EADDRINUSE, 48):
+            print(
+                f"HATA: {HOST}:{PORT} adresi dolu (başka bir süreç tutuyor).\n"
+                f"  1) O süreci kapat (ör. lsof -nP -iTCP:{PORT} -sTCP:LISTEN)\n"
+                f"  2) Ya da başka port: BUS_PORT=8790 uv run python bridge/bus_server.py\n"
+                f"     (Agent Panel pack url’i de ws://{HOST}:<port>/bus olmalı)"
+            )
+            raise SystemExit(1) from e
+        raise
 
 
 if __name__ == "__main__":
