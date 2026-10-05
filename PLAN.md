@@ -45,6 +45,11 @@ Her kaynak site kendi yapısına sahip olduğu için **site başına ajan** pren
 
 ## Fazlar
 
+### Faz K1.5 — Konuşma katmanı (veri + niyet) — 2026-10-05
+Agent Panel sohbeti: `Tools` (scrape_status/count_skus/run_history/data_quality),
+6 sınıflı niyet eşleme, LLM tool-context, provider preset. Detay: `docs/konusma-katmani-PLAN.md`.
+`start_run` / yazma aracı yok (K2).
+
 ### Faz 0 — Keşif (şu an buradayız)
 Her kaynak için `scouts/<kaynak>.md` raporu:
 - Hangi veriler mevcut (model listesi, ebat, EAN, EU etiketi, görsel)

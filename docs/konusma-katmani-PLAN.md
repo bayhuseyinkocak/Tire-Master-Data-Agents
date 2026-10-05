@@ -1,6 +1,6 @@
 # Konuşma Katmanı (K1.5) — Veri + Niyet Planı
 
-Durum: **uygulanacak** (kod bu projede; bitince dış kontrol)
+Durum: **uygulandı** (2026-10-05 — 4.1–4.5; dış kontrol bekliyor)
 Tarih: 2026-10-05
 Ana plan: `PLAN.md` · Panel planı: `docs/ajan-paneli-PLAN.md`
 Graf bilgisi: `graphify-out/` (bu proje); bitişte `graphify update .`
