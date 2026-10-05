@@ -34,6 +34,52 @@ THINK = {
     "PIRELLI": "swirl",
 }
 
+# Niyet → tetik kelimeleri (TR, küçük harf). Tablo sırası = öncelik (count → quality).
+INTENT_TRIGGERS: list[tuple[str, tuple[str, ...]]] = [
+    ("count", ("kaç", "adet", "sku", "ürün", "topladın", "kayıt sayısı", "kac", "urun")),
+    ("quality", ("eksik", "boş", "kalite", "validate", "kural", "ihlal", "bosluk")),
+    ("history", ("ne zaman", "en son", "son koşu", "kaç kez", "kaç kere", "history", "geçmiş")),
+    ("status", ("durum", "çalışıyor", "ilerleme", "ne yapıyorsun", "misyon", "görev", "calisiyor")),
+    ("error", ("hata", "error", "patladı", "patladi")),
+    ("hello", ("merhaba", "selam", "nasılsın", "naber", "nasilsin")),
+]
+
+# Daha spesifik çok-kelime kalıplar — kısa "kaç" gibi kelimelerden önce.
+INTENT_SPECIFIC: list[tuple[str, tuple[str, ...]]] = [
+    ("history", ("kaç kez", "kaç kere", "ne zaman", "en son", "son koşu")),
+    ("quality", ("eksik veri", "kural ihlal")),
+    ("status", ("ne yapıyorsun", "ne yapiyorsun")),
+]
+
+
+def route_intent(text: str) -> str:
+    """Tek intent: spesifik kalıp, sonra tablo sırası (count → quality → …)."""
+    t = (text or "").lower()
+    for intent, words in INTENT_SPECIFIC:
+        if any(w in t for w in words):
+            return intent
+    for intent, words in INTENT_TRIGGERS:
+        if any(w in t for w in words):
+            return intent
+    return "other"
+
+
+def secondary_hint(text: str, primary: str) -> str:
+    """Çok intent tek cümlede: ilk kazanır, ikincisine davet."""
+    t = (text or "").lower()
+    if primary != "quality" and any(w in t for w in ("eksik", "kalite", "kural", "ihlal")):
+        return " İstersen eksik veriye de bakayım."
+    if primary != "count" and any(w in t for w in ("adet", "sku", "ürün", "topladın", "kayıt sayısı")):
+        return " İstersen SKU sayısına da bakayım."
+    if primary != "history" and any(w in t for w in ("ne zaman", "en son", "kaç kez")):
+        return " İstersen koşu geçmişine de bakayım."
+    return ""
+
+
+def _clip_sentence(text: str) -> str:
+    """Araç metninde çift nokta olmasın."""
+    return (text or "").strip().rstrip(".")
+
 # misyon adımı = alt ajan kimliği (şimdilik transcript)
 STEP_SLUG = {
     "kesif": "KESIF",
@@ -302,15 +348,28 @@ class AgentRuntime:
         return self.central_llm
 
     def _fallback_say(self, p: AgentPersona, user_text: str) -> str:
-        status = self.tools.scrape_status(p.source)
-        skus = self.tools.count_skus()
+        status = _clip_sentence(self.tools.scrape_status(p.source))
+        skus = _clip_sentence(self.tools.count_skus())
+        quality = _clip_sentence(self.tools.data_quality())
+        history = _clip_sentence(self.tools.run_history(p.source, limit=3))
         seed = p.last_message or f"{p.brand} hattı açık."
-        text = user_text.lower()
-        if any(w in text for w in ("merhaba", "selam", "nasıl", "naber")):
-            return f"Buradayım — {p.brand}. {seed} Şu an: {status}."
-        if any(w in text for w in ("görev", "ne yapıyorsun", "durum", "ilerleme")):
-            return f"{p.brand}: {status} · {skus}. Misyon: {self.tools.mission_lines(p)}."
-        return f"{p.brand}: {seed} ({status})"
+        intent = route_intent(user_text)
+        hint = secondary_hint(user_text, intent)
+
+        if intent == "count":
+            mine = _clip_sentence(self.tools.count_skus(p.source))
+            return f"{p.brand}: {skus} · bende {mine}.{hint}"
+        if intent == "quality":
+            return f"{p.brand}: {quality}.{hint}"
+        if intent == "history":
+            return f"{p.brand}: {history} · şu an: {status}.{hint}"
+        if intent == "status":
+            return f"{p.brand}: {status} · {skus}. Misyon: {self.tools.mission_lines(p)}.{hint}"
+        if intent == "error":
+            return f"{p.brand}: {status} · {quality}.{hint}"
+        if intent == "hello":
+            return f"Buradayım — {p.brand}. {seed} Şu an: {status}.{hint}"
+        return f"{p.brand}: {seed} ({status} · {skus}){hint}"
 
     def _maybe_subagents(self, p: AgentPersona, user_text: str) -> list[dict[str, Any]]:
         """Konuşmada adım geçiyorsa alt ajan transcript'i (K1)."""
